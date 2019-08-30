@@ -1,0 +1,6 @@
+# ignore exe file
+qnxplayer
+
+# ingore backup file
+*~
+
