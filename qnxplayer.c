@@ -190,7 +190,7 @@ int main(int argc, char* argv[])
 	int outlinesize[4];
 
 	// screen
-	int bformat = SCREEN_FORMAT_RGBA8888;//SCREEN_FORMAT_RGB888;
+	int bformat = SCREEN_FORMAT_NV12;//SCREEN_FORMAT_RGBA8888;//SCREEN_FORMAT_RGB888;
 	int usage = SCREEN_USAGE_NATIVE | SCREEN_USAGE_WRITE | SCREEN_USAGE_READ;
 	int nbuffers = 2;
 	int ndisplays = 0;
@@ -341,7 +341,7 @@ int main(int argc, char* argv[])
 	av_dump_format(pFormatCtx,0,argv[1],0);
 	printf("-------------------------------------------------\n");
 
-	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, displays[0].size[0], displays[0].size[1], AV_PIX_FMT_BGRA, SWS_BICUBIC, NULL, NULL, NULL);
+	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, displays[0].size[0], displays[0].size[1], AV_PIX_FMT_NV12/*AV_PIX_FMT_BGRA*/, SWS_BICUBIC, NULL, NULL, NULL);
 	printf("codec ctx, height: %d, width: %d\n", pCodecCtx->height, pCodecCtx->width);
 
 	gettimeofday(&tv_last, NULL);
@@ -355,12 +355,12 @@ int main(int argc, char* argv[])
 			}
 			if(got_picture){
 				outbuf[0] = displays[0].pointers[0];
-				outbuf[1] = 0;
+				outbuf[1] = displays[0].pointers[0] + displays[0].stride[0] * displays[0].size[1];
 				outbuf[2] = 0;
 				outbuf[3] = 0;
 
 				outlinesize[0] = displays[0].stride[0];
-				outlinesize[1] = 0;
+				outlinesize[1] = displays[0].stride[0];
 				outlinesize[2] = 0;
 				outlinesize[3] = 0;
 
