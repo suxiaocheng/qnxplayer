@@ -174,7 +174,7 @@ int main(int argc, char* argv[])
 	AVFormatContext	*pFormatCtx;
 	int i, j, videoindex;
 	AVCodecContext	*pCodecCtx;
-	AVCodec			*pCodec;
+	AVCodec	*pCodec;
 	AVFrame	*pFrame,*pFrameYUV;
 	AVPacket *packet;
 	struct SwsContext *img_convert_ctx;
@@ -194,7 +194,6 @@ int main(int argc, char* argv[])
 	int usage = SCREEN_USAGE_NATIVE | SCREEN_USAGE_WRITE | SCREEN_USAGE_READ;
 	int nbuffers = 2;
 	int ndisplays = 0;
-	screen_display_t *screen_dpy;
 	struct {
 			pthread_mutex_t mutex;
 			pthread_cond_t cond;
@@ -204,100 +203,13 @@ int main(int argc, char* argv[])
 			screen_window_t screen_win;
 			void **pointers;
 			screen_buffer_t screen_buf[2];
-	} *displays;
+	} displays[2];
 
 	int ret, got_picture;
 	int idx = -1;
 	int rc;
 
-	// init screen
-	screen_create_context(&screen_ctx, SCREEN_APPLICATION_CONTEXT);
-	screen_get_context_property_iv(screen_ctx, SCREEN_PROPERTY_DISPLAY_COUNT, &ndisplays);
-	if (ndisplays > 0) {
-		screen_dpy = calloc(ndisplays, sizeof(screen_display_t));
-		screen_get_context_property_pv(screen_ctx, SCREEN_PROPERTY_DISPLAYS, (void **)screen_dpy);
-	}
-	printf("system has %d display\n", ndisplays);
-
-	displays = calloc(ndisplays, sizeof(*displays));
-	for (i = 0; i < ndisplays; i++) {
-		int active = 0;
-		screen_get_display_property_iv(screen_dpy[i], SCREEN_PROPERTY_ATTACHED, &active);
-		if (active) {
-			if (idx == -1) {
-				displays[i].state = focused;
-				idx = i;
-			} else {
-				displays[i].state = attached;
-			}
-		} else {
-			displays[i].state = detached;
-		}
-
-		printf("dpy: %d, state: %d\n", i, displays[i].state);
-		pthread_mutex_init(&displays[i].mutex, NULL);
-		pthread_cond_init(&displays[i].cond, NULL);
-	}
-	ndisplays=1;
-	for (i = 0; i < ndisplays; i++) {
-		displays[i].pointers = (void **)malloc(sizeof(void *) * nbuffers);
-		if (displays[i].pointers == NULL) {
-			perror("malloc buffer fail\n");
-		}
-		screen_create_window(&displays[i].screen_win, screen_ctx);
-		/*if (idx != i) {
-			idx = i;
-			screen_set_window_property_pv(displays[i].screen_win, SCREEN_PROPERTY_DISPLAY, (void **)&displays[i]);
-		}*/
-		screen_set_window_property_pv(displays[i].screen_win, SCREEN_PROPERTY_DISPLAY, (void **)&screen_dpy[i]);
-		screen_set_window_property_iv(displays[i].screen_win, SCREEN_PROPERTY_USAGE, &usage);
-
-		displays[i].size[0] = 3840;
-		displays[i].size[1] = 720;
-		rc = screen_set_window_property_iv(displays[i].screen_win, SCREEN_PROPERTY_SIZE, displays[i].size);
-		if (rc) {
-			perror("screen_set_window_property_iv[SCREEN_PROPERTY_SIZE]");
-		} else {
-			printf("width: %d, height: %d\n", displays[i].size[0], displays[i].size[1]);
-		}
-		
-		rc = screen_get_window_property_iv(displays[i].screen_win, SCREEN_PROPERTY_SIZE, displays[i].size);
-		if (rc) {
-			perror("screen_get_window_property_iv[SCREEN_PROPERTY_SIZE]");
-		} else {
-			printf("width: %d, height: %d\n", displays[i].size[0], displays[i].size[1]);
-		}
-		
-		rc = screen_set_window_property_iv(displays[i].screen_win, SCREEN_PROPERTY_FORMAT, &bformat);
-		if (rc) {
-			perror("screen_set_window_property_iv(SCREEN_PROPERTY_FORMAT)");
-			goto fail;
-		}
-		screen_create_window_buffers(displays[i].screen_win, nbuffers);
-
-		screen_get_window_property_pv(displays[i].screen_win, SCREEN_PROPERTY_RENDER_BUFFERS, (void **)displays[i].screen_buf);
-		for (j = 0; j < nbuffers; j++) {
-			rc = screen_get_buffer_property_iv(displays[i].screen_buf[j], SCREEN_PROPERTY_STRIDE, &displays[i].stride[j]);
-			if (rc) {
-				perror("screen_get_buffer_property_iv[SCREEN_PROPERTY_STRIDE]");
-			} else {
-				printf("stride: %d\n", displays[i].stride[j]);
-			}
-			rc = screen_get_buffer_property_pv(displays[i].screen_buf[j], SCREEN_PROPERTY_POINTER, &(displays[i].pointers[j]));
-			if (rc) {
-				perror("screen_get_window_property_pv(SCREEN_PROPERTY_POINTER)");
-				goto fail;
-			}
-		}
-	}
-	m_screen_win = displays[0].screen_win;
-	// int ShareWindow(screen_window_t share_screen_win, int disp_id, int *pos, float *scale)
-	int pos[2] = {-1920, 0};
-	float scale[2] = {1, 1};
-	screen_create_window(&displays[1].screen_win, screen_ctx);
-	ShareWindow(displays[1].screen_win, 1, pos, scale);
-
-	// ffmpeg init
+	// step1: ffmpeg init
 	av_register_all();
 	avformat_network_init();
 	
@@ -340,6 +252,56 @@ int main(int argc, char* argv[])
 	printf("------------- File Information ------------------\n");
 	av_dump_format(pFormatCtx,0,argv[1],0);
 	printf("-------------------------------------------------\n");
+
+	// step2: init screen
+	screen_create_context(&screen_ctx, SCREEN_APPLICATION_CONTEXT);
+	screen_get_context_property_iv(screen_ctx, SCREEN_PROPERTY_DISPLAY_COUNT, &ndisplays);
+	printf("system has %d display\n", ndisplays);
+
+	displays[0].pointers = (void **)malloc(sizeof(void *) * nbuffers);
+	if (displays[0].pointers == NULL) {
+		perror("malloc buffer fail\n");
+	}
+	screen_create_window(&displays[0].screen_win, screen_ctx);
+	screen_set_window_property_iv(displays[0].screen_win, SCREEN_PROPERTY_USAGE, &usage);
+
+	/* force the window buffer to the video size */
+	displays[0].size[0] = pCodecCtx->width;
+	displays[0].size[1] = pCodecCtx->height;
+	rc = screen_set_window_property_iv(displays[0].screen_win, SCREEN_PROPERTY_SIZE, displays[0].size);
+	if (rc) {
+		perror("screen_set_window_property_iv[SCREEN_PROPERTY_SIZE]");
+	} else {
+		printf("width: %d, height: %d\n", displays[0].size[0], displays[0].size[1]);
+	}
+	
+	rc = screen_set_window_property_iv(displays[0].screen_win, SCREEN_PROPERTY_FORMAT, &bformat);
+	if (rc) {
+		perror("screen_set_window_property_iv(SCREEN_PROPERTY_FORMAT)");
+		goto fail;
+	}
+	screen_create_window_buffers(displays[0].screen_win, nbuffers);
+
+	screen_get_window_property_pv(displays[0].screen_win, SCREEN_PROPERTY_RENDER_BUFFERS, (void **)displays[0].screen_buf);
+	for (j = 0; j < nbuffers; j++) {
+		rc = screen_get_buffer_property_iv(displays[0].screen_buf[j], SCREEN_PROPERTY_STRIDE, &displays[0].stride[j]);
+		if (rc) {
+			perror("screen_get_buffer_property_iv[SCREEN_PROPERTY_STRIDE]");
+		} else {
+			printf("stride: %d\n", displays[0].stride[j]);
+		}
+		rc = screen_get_buffer_property_pv(displays[0].screen_buf[j], SCREEN_PROPERTY_POINTER, &(displays[0].pointers[j]));
+		if (rc) {
+			perror("screen_get_window_property_pv(SCREEN_PROPERTY_POINTER)");
+			goto fail;
+		}
+	}
+	 
+	m_screen_win = displays[0].screen_win;
+	int pos[2] = {-1920, 0};
+	float scale[2] = {1, 1};
+	screen_create_window(&displays[1].screen_win, screen_ctx);
+	ShareWindow(displays[1].screen_win, 1, pos, scale);
 
 	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, displays[0].size[0], displays[0].size[1], AV_PIX_FMT_NV12/*AV_PIX_FMT_BGRA*/, SWS_BICUBIC, NULL, NULL, NULL);
 	printf("codec ctx, height: %d, width: %d\n", pCodecCtx->height, pCodecCtx->width);
