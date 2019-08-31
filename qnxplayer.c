@@ -17,8 +17,8 @@
 
 #define MMI_MSG_ERROR printf
 #define MMI_MSG_MED printf
-screen_context_t screen_ctx;
-screen_window_t m_screen_win;
+screen_context_t screen_ctx = NULL;
+screen_window_t m_screen_win = NULL;
 
 int ShareWindow(screen_window_t share_screen_win, int disp_id, int *pos, float *scale)
 {
@@ -26,7 +26,6 @@ int ShareWindow(screen_window_t share_screen_win, int disp_id, int *pos, float *
 
    if(screen_ctx && m_screen_win && share_screen_win)
    {
-	printf("[suxch]%s\n", __func__);
       /*
        * TODO: If it's not set to be invisible, it will flicker with a white interface when opened.
        */
@@ -171,13 +170,13 @@ int ShareWindow(screen_window_t share_screen_win, int disp_id, int *pos, float *
 int main(int argc, char* argv[])
 {
 	//FFmpeg
-	AVFormatContext	*pFormatCtx;
+	AVFormatContext	*pFormatCtx = NULL;
 	int i, j, videoindex;
-	AVCodecContext	*pCodecCtx;
+	AVCodecContext	*pCodecCtx = NULL;
 	AVCodec	*pCodec;
-	AVFrame	*pFrame,*pFrameYUV;
+	AVFrame	*pFrame = NULL,*pFrameYUV = NULL;
 	AVPacket *packet;
-	struct SwsContext *img_convert_ctx;
+	struct SwsContext *img_convert_ctx = NULL;
 
 	// framerate static data
 	struct timeval tv_last;
@@ -210,7 +209,7 @@ int main(int argc, char* argv[])
 	int rc;
 
 	// step1: ffmpeg init
-	av_register_all();
+	// av_register_all();
 	avformat_network_init();
 	
 	pFormatCtx = avformat_alloc_context();
@@ -330,7 +329,7 @@ int main(int argc, char* argv[])
 				screen_post_window(displays[0].screen_win, displays[0].screen_buf[0], 0, NULL, 0);
 			}
 		}
-		av_free_packet(packet);
+		av_packet_unref(packet);
 		frame_rate++;
 		gettimeofday(&tv_current, NULL);
 		double diff = tv_current.tv_usec / 1000000.0 + tv_current.tv_sec - 
@@ -371,12 +370,21 @@ int main(int argc, char* argv[])
 		//Delay 40ms
 		SDL_Delay(40);
 	}
-#endif 
-	sws_freeContext(img_convert_ctx);
+#endif
+
 fail: 
-	av_free(pFrameYUV);
-	avcodec_close(pCodecCtx);
-	avformat_close_input(&pFormatCtx);
+	if (img_convert_ctx) {
+		sws_freeContext(img_convert_ctx);
+	}
+	if (pFrameYUV) {
+		av_free(pFrameYUV);
+	}
+	if (pCodecCtx) {
+		avcodec_close(pCodecCtx);
+	}
+	if (pFormatCtx) {
+		avformat_close_input(&pFormatCtx);
+	}
  
 	return 0;
 }
