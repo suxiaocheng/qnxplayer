@@ -32,6 +32,7 @@ struct {
 		void **pointers;
 		screen_buffer_t screen_buf[2];
 } displays[2] = {0};
+int nbuffers = 2;
 
 #define MMI_MSG_ERROR printf
 #define MMI_MSG_MED printf
@@ -64,7 +65,7 @@ int put_screen_buffer_queue(screen_buffer_queue_t *queue, void *item)
 		queue->buf[queue->ipos] = item;
 		queue->valid_item++;
 		status = 0;
-		printf("%s %p add %p, valid: %d\n", __func__, queue, item, queue->valid_item);
+		// printf("%s %p add %p, valid: %d\n", __func__, queue, item, queue->valid_item);
 	}
 	pthread_mutex_unlock( &mutex );
 	return status;
@@ -82,7 +83,7 @@ void *get_screen_buffer_queue(screen_buffer_queue_t *queue)
 		}
 		queue->valid_item--;
 		buf = queue->buf[queue->opos];
-		printf("%s %p del %p, valid: %d\n", __func__, queue, buf, queue->valid_item);
+		// printf("%s %p del %p, valid: %d\n", __func__, queue, buf, queue->valid_item);
 	}
 	pthread_mutex_unlock( &mutex );
 	return buf;
@@ -238,17 +239,48 @@ int ShareWindow(screen_window_t share_screen_win, int disp_id, int *pos, float *
 void* screen_refreash( void * arg )
 {
 	void *buf = NULL;
-	int first_frame = true;
+	int first_refreash = true;
+	struct timeval tv_last;
+	struct timeval tv_current;
+	int i;
 	while( 1 )
 	{
 		buf = NULL;
 		while (buf == NULL){
 			buf = get_screen_buffer_queue(&screen_buffer_queue_used);
 			if (buf == NULL) {
-				pthread_cond_wait( &cond_post_screen, &mutex );
+				// pthread_cond_wait( &cond_post_screen, &mutex );
+				usleep(10);
 			}
 		}
-		// screen_post_window(displays[0].screen_win, buf, 0, NULL, 0);
+		for(i=0; i<nbuffers; i++) {
+			if (buf == displays[0].pointers[i]) {
+				break;
+			}
+		}
+		if (first_refreash) {
+			gettimeofday(&tv_last, NULL);
+		} else {
+			/*
+			while (1) {
+				gettimeofday(&tv_current, NULL);
+				double diff = tv_current.tv_usec / 1000000.0 + tv_current.tv_sec - 
+					(tv_last.tv_usec / 1000000.0 + tv_last.tv_sec);
+				if (diff >= 0.033) {
+					break;
+				} else {
+					usleep(33-(int)(diff*1000));
+				}
+			}
+			tv_last = tv_current;
+			*/
+		}
+		if (i < nbuffers) {
+			screen_post_window(displays[0].screen_win, displays[0].screen_buf[i], 0, NULL, 0);
+			printf("->%lf\n", (double)tv_last.tv_usec / 1000000.0 + tv_last.tv_sec);
+		} else {
+			printf("Error: unknow buffer, didn't know how to post\n");
+		}
 		/* After we post the buffer to screen, return it back to free pool */
 		put_screen_buffer_queue(&screen_buffer_queue_free, buf);
 		pthread_cond_signal( &cond_free_buf );	
@@ -269,6 +301,8 @@ int main(int argc, char* argv[])
 
 	// framerate static data
 	struct timeval tv_last;
+	struct timeval tv_tmp1;
+	struct timeval tv_tmp2;
 	struct timeval tv_current;
 	int frame_rate = 0;
 	double fframe_rate = 0;
@@ -280,7 +314,6 @@ int main(int argc, char* argv[])
 	// screen
 	int bformat = SCREEN_FORMAT_NV12;//SCREEN_FORMAT_RGBA8888;//SCREEN_FORMAT_RGB888;
 	int usage = SCREEN_USAGE_NATIVE | SCREEN_USAGE_WRITE | SCREEN_USAGE_READ;
-	int nbuffers = 2;
 	int ndisplays = 0;
 	int ret, got_picture;
 	int idx = -1;
@@ -415,24 +448,30 @@ int main(int argc, char* argv[])
 				outlinesize[1] = displays[0].stride[0];
 				outlinesize[2] = 0;
 				outlinesize[3] = 0;
-
+				gettimeofday(&tv_tmp1, NULL);
 				sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, outbuf, outlinesize);
-				screen_post_window(displays[0].screen_win, buf, 0, NULL, 0);
+				gettimeofday(&tv_tmp2, NULL);
+
+				double decode_diff = tv_tmp2.tv_usec / 1000000.0 + tv_tmp2.tv_sec - 
+					(tv_tmp1.tv_usec / 1000000.0 + tv_tmp1.tv_sec);
+				printf("# %lf\n", decode_diff);
+
 				put_screen_buffer_queue(&screen_buffer_queue_used, buf);
 				pthread_cond_signal( &cond_post_screen );
+
+				frame_rate++;
+				gettimeofday(&tv_current, NULL);
+				double diff = tv_current.tv_usec / 1000000.0 + tv_current.tv_sec - 
+					(tv_last.tv_usec / 1000000.0 + tv_last.tv_sec);
+				if(diff >= 1) {
+					fframe_rate = frame_rate/diff;
+					printf("Current frame rate is : %lf\n", fframe_rate);
+					tv_last = tv_current;
+					frame_rate = 0;
+				}
 			}
 		}
 		av_packet_unref(packet);
-		frame_rate++;
-		gettimeofday(&tv_current, NULL);
-		double diff = tv_current.tv_usec / 1000000.0 + tv_current.tv_sec - 
-			(tv_last.tv_usec / 1000000.0 + tv_last.tv_sec);
-		if(diff >= 1) {
-			fframe_rate = frame_rate/diff;
-			printf("Current frame rate is : %lf\n", fframe_rate);
-			tv_last = tv_current;
-			frame_rate = 0;
-		}
 	}
 #if 0 
 	//FIX: Flush Frames remained in Codec
