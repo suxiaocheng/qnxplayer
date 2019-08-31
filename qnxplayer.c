@@ -15,10 +15,78 @@
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 
+typedef struct screen_buffer_queue{
+	void *buf[10];
+	int ipos;
+	int opos;
+	int valid_item;
+}screen_buffer_queue_t;
+
+struct {
+		pthread_mutex_t mutex;
+		pthread_cond_t cond;
+		enum { detached, attached, focused } state;
+		int size[2];
+		int stride[2];
+		screen_window_t screen_win;
+		void **pointers;
+		screen_buffer_t screen_buf[2];
+} displays[2] = {0};
+
 #define MMI_MSG_ERROR printf
 #define MMI_MSG_MED printf
 screen_context_t screen_ctx = NULL;
 screen_window_t m_screen_win = NULL;
+
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t cond_free_buf = PTHREAD_COND_INITIALIZER;
+pthread_cond_t cond_post_screen = PTHREAD_COND_INITIALIZER;
+
+screen_buffer_queue_t screen_buffer_queue_free;
+screen_buffer_queue_t screen_buffer_queue_used;
+
+void init_screen_buffer_queue(screen_buffer_queue_t *queue)
+{
+	queue->ipos = queue->opos = 0;
+	queue->valid_item = 0;
+}
+
+int put_screen_buffer_queue(screen_buffer_queue_t *queue, void *item)
+{
+	int status = 1;
+	pthread_mutex_lock( &mutex );
+	if (queue->valid_item < sizeof(queue->buf)/sizeof(void *)) {
+		if(queue->ipos < (sizeof(queue->buf)/sizeof(void *) - 1)) {
+			queue->ipos++;
+		} else {
+			queue->ipos = 0;
+		}
+		queue->buf[queue->ipos] = item;
+		queue->valid_item++;
+		status = 0;
+		printf("%s %p add %p, valid: %d\n", __func__, queue, item, queue->valid_item);
+	}
+	pthread_mutex_unlock( &mutex );
+	return status;
+}
+
+void *get_screen_buffer_queue(screen_buffer_queue_t *queue)
+{
+	void *buf = NULL;
+	pthread_mutex_lock( &mutex );
+	if (queue->valid_item > 0) {
+		if (queue->opos < (sizeof(queue->buf)/sizeof(void *) - 1)) {
+			queue->opos++;
+		} else {
+			queue->opos = 0;
+		}
+		queue->valid_item--;
+		buf = queue->buf[queue->opos];
+		printf("%s %p del %p, valid: %d\n", __func__, queue, buf, queue->valid_item);
+	}
+	pthread_mutex_unlock( &mutex );
+	return buf;
+}
 
 int ShareWindow(screen_window_t share_screen_win, int disp_id, int *pos, float *scale)
 {
@@ -167,6 +235,27 @@ int ShareWindow(screen_window_t share_screen_win, int disp_id, int *pos, float *
    return rc;
 }
 
+void* screen_refreash( void * arg )
+{
+	void *buf = NULL;
+	int first_frame = true;
+	while( 1 )
+	{
+		buf = NULL;
+		while (buf == NULL){
+			buf = get_screen_buffer_queue(&screen_buffer_queue_used);
+			if (buf == NULL) {
+				pthread_cond_wait( &cond_post_screen, &mutex );
+			}
+		}
+		// screen_post_window(displays[0].screen_win, buf, 0, NULL, 0);
+		/* After we post the buffer to screen, return it back to free pool */
+		put_screen_buffer_queue(&screen_buffer_queue_free, buf);
+		pthread_cond_signal( &cond_free_buf );	
+	}
+	return 0;
+}
+
 int main(int argc, char* argv[])
 {
 	//FFmpeg
@@ -193,34 +282,26 @@ int main(int argc, char* argv[])
 	int usage = SCREEN_USAGE_NATIVE | SCREEN_USAGE_WRITE | SCREEN_USAGE_READ;
 	int nbuffers = 2;
 	int ndisplays = 0;
-	struct {
-			pthread_mutex_t mutex;
-			pthread_cond_t cond;
-			enum { detached, attached, focused } state;
-			int size[2];
-			int stride[2];
-			screen_window_t screen_win;
-			void **pointers;
-			screen_buffer_t screen_buf[2];
-	} displays[2];
-
 	int ret, got_picture;
 	int idx = -1;
 	int rc;
 
+	// Init two queue for future thread used
+	init_screen_buffer_queue(&screen_buffer_queue_free);
+	init_screen_buffer_queue(&screen_buffer_queue_used);
+
 	// step1: ffmpeg init
-	// av_register_all();
 	avformat_network_init();
 	
 	pFormatCtx = avformat_alloc_context();
  
 	if(avformat_open_input(&pFormatCtx,argv[1],NULL,NULL)!=0){
 		printf("Couldn't open input stream.\n");
-		return -1;
+		goto fail;
 	}
 	if(avformat_find_stream_info(pFormatCtx,NULL)<0){
 		printf("Couldn't find stream information.\n");
-		return -1;
+		goto fail;
 	}
 	videoindex=-1;
 	for(i=0; i<pFormatCtx->nb_streams; i++) {
@@ -231,17 +312,17 @@ int main(int argc, char* argv[])
 	}
 	if(videoindex==-1){
 		printf("Didn't find a video stream.\n");
-		return -1;
+		goto fail;
 	}
 	pCodecCtx=pFormatCtx->streams[videoindex]->codec;
 	pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
 	if(pCodec==NULL){
 		printf("Codec not found.\n");
-		return -1;
+		goto fail;
 	}
 	if(avcodec_open2(pCodecCtx, pCodec,NULL)<0){
 		printf("Could not open codec.\n");
-		return -1;
+		goto fail;
 	}
 	
 	pFrame=av_frame_alloc();
@@ -294,6 +375,7 @@ int main(int argc, char* argv[])
 			perror("screen_get_window_property_pv(SCREEN_PROPERTY_POINTER)");
 			goto fail;
 		}
+		put_screen_buffer_queue(&screen_buffer_queue_free, (void *)displays[0].pointers[j]);
 	}
 	 
 	m_screen_win = displays[0].screen_win;
@@ -305,6 +387,8 @@ int main(int argc, char* argv[])
 	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, displays[0].size[0], displays[0].size[1], AV_PIX_FMT_NV12/*AV_PIX_FMT_BGRA*/, SWS_BICUBIC, NULL, NULL, NULL);
 	printf("codec ctx, height: %d, width: %d\n", pCodecCtx->height, pCodecCtx->width);
 
+	pthread_create( NULL, NULL, &screen_refreash, NULL );
+
 	gettimeofday(&tv_last, NULL);
 	while(av_read_frame(pFormatCtx, packet)>=0){
 		if(packet->stream_index==videoindex){
@@ -312,11 +396,18 @@ int main(int argc, char* argv[])
 			ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, packet);
 			if(ret < 0){
 				printf("Decode Error.\n");
-				return -1;
+				goto fail;
 			}
 			if(got_picture){
-				outbuf[0] = displays[0].pointers[0];
-				outbuf[1] = displays[0].pointers[0] + displays[0].stride[0] * displays[0].size[1];
+				void *buf = NULL; 
+				while (buf == NULL) {
+					buf = get_screen_buffer_queue(&screen_buffer_queue_free);
+					if (buf == NULL) {
+						pthread_cond_wait( &cond_free_buf, &mutex );
+					}
+				}
+				outbuf[0] = buf;
+				outbuf[1] = buf + displays[0].stride[0] * displays[0].size[1];
 				outbuf[2] = 0;
 				outbuf[3] = 0;
 
@@ -326,7 +417,9 @@ int main(int argc, char* argv[])
 				outlinesize[3] = 0;
 
 				sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, outbuf, outlinesize);
-				screen_post_window(displays[0].screen_win, displays[0].screen_buf[0], 0, NULL, 0);
+				screen_post_window(displays[0].screen_win, buf, 0, NULL, 0);
+				put_screen_buffer_queue(&screen_buffer_queue_used, buf);
+				pthread_cond_signal( &cond_post_screen );
 			}
 		}
 		av_packet_unref(packet);
@@ -372,7 +465,18 @@ int main(int argc, char* argv[])
 	}
 #endif
 
+
 fail: 
+	if (displays[0].pointers) {
+		free(displays[0].pointers);	
+	}
+	if (displays[0].screen_win) {
+		screen_destroy_window_buffers(displays[0].screen_win);
+		screen_destroy_window(displays[0].screen_win);
+	}
+	if (m_screen_win) {
+		screen_destroy_window(m_screen_win);	
+	}
 	if (img_convert_ctx) {
 		sws_freeContext(img_convert_ctx);
 	}
