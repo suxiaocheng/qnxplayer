@@ -3,4 +3,5 @@ qnxplayer
 
 # ingore backup file
 *~
-
+# ignore the swap file
+*.swp

@@ -4,9 +4,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <unistd.h>
-#include <sys/keycodes.h>
 #include <time.h>
-#include <screen/screen.h>
 #include <errno.h>
 #include <pthread.h>
 #include <sys/time.h>
@@ -15,158 +13,18 @@
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
 
-#define MMI_MSG_ERROR printf
-#define MMI_MSG_MED printf
-screen_context_t screen_ctx;
-screen_window_t m_screen_win;
+#include <SDL.h>
 
-int ShareWindow(screen_window_t share_screen_win, int disp_id, int *pos, float *scale)
+SDL_Window *g_pWindow = 0;
+SDL_Renderer *g_pRenderer = 0;
+int need_quit = false;
+
+void when_sigint()  
 {
-   int rc = 0;
-
-   if(screen_ctx && m_screen_win && share_screen_win)
-   {
-	printf("[suxch]%s\n", __func__);
-      /*
-       * TODO: If it's not set to be invisible, it will flicker with a white interface when opened.
-       */
-      // int visible = 1;
-      // screen_set_window_property_iv(share_screen_win, SCREEN_PROPERTY_VISIBLE, &visible);
-
-      rc = screen_share_window_buffers(share_screen_win, m_screen_win);
-      if ( rc )
-      {
-         MMI_MSG_ERROR("screen_share_window_buffers failed %d", rc);
-      }
-
-      {
-         unsigned int nDisplays=0;
-
-         if ( !rc )
-         {
-            rc = screen_get_context_property_iv(screen_ctx, SCREEN_PROPERTY_DISPLAY_COUNT,
-                                                   (int *)&nDisplays);
-            if (rc)
-            {
-               MMI_MSG_ERROR("screen_get_context_property_iv(SCREEN_PROPERTY_DISPLAY_COUNT)");
-            }
-         }
-
-         MMI_MSG_MED("display count %d", nDisplays);
-
-         if ( !rc )
-         {
-            screen_display_t* screen_disp = (screen_display_t *) calloc(nDisplays, sizeof(*screen_disp));
-            if (screen_disp == NULL)
-            {
-               fprintf(stderr, "could not allocate memory for display list\n");
-               rc = 1;
-            }
-
-            if ( !rc )
-            {
-               rc = screen_get_context_property_pv(screen_ctx, SCREEN_PROPERTY_DISPLAYS,
-                                                   (void **)screen_disp);
-               if (rc)
-               {
-                  MMI_MSG_ERROR("screen_get_context_property_ptr(SCREEN_PROPERTY_DISPLAYS)");
-                  free(screen_disp);
-               }
-            }
-
-            if ( !rc )
-            {
-               rc = screen_set_window_property_pv(share_screen_win, SCREEN_PROPERTY_DISPLAY,
-                                                      (void **)&screen_disp[disp_id]);
-               if (rc)
-               {
-                  //MMI_MSG_ERROR("screen_set_window_property_ptr(SCREEN_PROPERTY_DISPLAY), display id = %d",m_sDeviceCfg.nDisplayId);
-               }
-               else
-               {
-                  //MMI_MSG_LOW("screen_set_window_property_ptr(SCREEN_PROPERTY_DISPLAY), display id = %d",m_sDeviceCfg.nDisplayId);
-               }
-
-               free(screen_disp);
-            }
-         }
-      }
-#if 0
-      if ( !rc )
-      {
-         int format = local_map_omx_color_format(m_sDeviceCfg.eColorFormat);
-         rc = screen_set_window_property_iv(share_screen_win, SCREEN_PROPERTY_FORMAT, &format);
-         if (rc)
-         {
-            MMI_MSG_ERROR("screen_set_window_property_iv(SCREEN_PROPERTY_FORMAT)");
-         }
-      }
-#endif
-
-      if ( !rc )
-      {
-         int size[2];
-         size[0] = 3840; //m_sDeviceCfg.nFrameWidth;
-         size[1] = 720; //m_sDeviceCfg.nFrameHeight;
-
-         rc = screen_set_window_property_iv(share_screen_win, SCREEN_PROPERTY_SOURCE_SIZE, size);
-         if (rc)
-         {
-            MMI_MSG_ERROR("screen_get_window_property_iv(SCREEN_PROPERTY_SOURCE_SIZE)");
-         }
-      }
-
-      if ( !rc )
-      {
-         MMI_MSG_MED("Screen setting position %dx%d", pos[0], pos[1]);
-         rc = screen_set_window_property_iv(share_screen_win, SCREEN_PROPERTY_POSITION, pos);
-         if (rc)
-         {
-           MMI_MSG_ERROR("screen_set_window_property_iv(SCREEN_PROPERTY_POSITION)");
-         }
-      }
-#if 0
-      if ( !rc )
-      {
-         int bsize[2];
-         bsize[0] = m_sDeviceCfg.nFrameWidth;
-         bsize[1] = m_sDeviceCfg.nFrameHeight;
-
-         rc = screen_set_window_property_iv(share_screen_win, SCREEN_PROPERTY_BUFFER_SIZE, bsize);
-         if (rc)
-         {
-            MMI_MSG_ERROR("screen_set_window_property_iv(SCREEN_PROPERTY_BUFFER_SIZE)");
-         }
-      }
-#endif
-      if ( !rc )
-      {
-         int outsize[2]= {0};
-
-         //adjust aspect ratio
-	/*
-         if ( ( m_sDeviceCfg.nRotation == 90 ) || ( m_sDeviceCfg.nRotation == 270 ) )
-         {
-            outsize[0] = m_sDeviceCfg.nFrameHeight * scale[0];
-            outsize[1] = m_sDeviceCfg.nFrameWidth * scale[1];
-         }
-         else
-*/
-         {
-            outsize[0] = 3840; //m_sDeviceCfg.nFrameWidth * scale[0];
-            outsize[1] = 720; //m_sDeviceCfg.nFrameHeight * scale[1];
-         }
-
-         rc = screen_set_window_property_iv(share_screen_win, SCREEN_PROPERTY_SIZE, outsize);
-         if (rc)
-         {
-            MMI_MSG_ERROR("screen_get_window_property_iv(SCREEN_PROPERTY_SIZE)");
-         }
-      }
-   }
-
-   return rc;
-}
+	printf("User quit, set quit flag\n");
+	need_quit = true;
+	//exit(0);  
+}  
 
 int main(int argc, char* argv[])
 {
@@ -189,113 +47,37 @@ int main(int argc, char* argv[])
 	unsigned char *outbuf[4];
 	int outlinesize[4];
 
-	// screen
-	int bformat = SCREEN_FORMAT_RGBA8888;//SCREEN_FORMAT_RGB888;
-	int usage = SCREEN_USAGE_NATIVE | SCREEN_USAGE_WRITE | SCREEN_USAGE_READ;
-	int nbuffers = 2;
-	int ndisplays = 0;
-	screen_display_t *screen_dpy;
-	struct {
-			pthread_mutex_t mutex;
-			pthread_cond_t cond;
-			enum { detached, attached, focused } state;
-			int size[2];
-			int stride[2];
-			screen_window_t screen_win;
-			void **pointers;
-			screen_buffer_t screen_buf[2];
-	} *displays;
+	int ret;
+	int got_picture;
+	unsigned char *raw_nv12 = NULL;
 
-	int ret, got_picture;
-	int idx = -1;
-	int rc;
+	// sdl var
+	SDL_Texture* m_pTexture; // the new SDL_Texture variable
+	SDL_Rect m_sourceRectangle; // the first rectangle
+	SDL_Rect m_destinationRectangle; // another rectangle
+	SDL_Surface* pTempSurface = NULL;
+	int window_width = 640;
+	int widnow_height = 480;
 
-	// init screen
-	screen_create_context(&screen_ctx, SCREEN_APPLICATION_CONTEXT);
-	screen_get_context_property_iv(screen_ctx, SCREEN_PROPERTY_DISPLAY_COUNT, &ndisplays);
-	if (ndisplays > 0) {
-		screen_dpy = calloc(ndisplays, sizeof(screen_display_t));
-		screen_get_context_property_pv(screen_ctx, SCREEN_PROPERTY_DISPLAYS, (void **)screen_dpy);
-	}
-	printf("system has %d display\n", ndisplays);
+	signal(SIGINT,when_sigint);
 
-	displays = calloc(ndisplays, sizeof(*displays));
-	for (i = 0; i < ndisplays; i++) {
-		int active = 0;
-		screen_get_display_property_iv(screen_dpy[i], SCREEN_PROPERTY_ATTACHED, &active);
-		if (active) {
-			if (idx == -1) {
-				displays[i].state = focused;
-				idx = i;
-			} else {
-				displays[i].state = attached;
-			}
+	// initialize SDL
+	if (SDL_Init(SDL_INIT_EVERYTHING) >= 0) {
+	// if succeeded create our window
+		g_pWindow = SDL_CreateWindow("Chapter 1: Setting up SDL",
+				SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 
+				window_width, widnow_height, SDL_WINDOW_SHOWN);
+	// if the window creation succeeded create our renderer
+		if (g_pWindow != 0) {
+			g_pRenderer = SDL_CreateRenderer(g_pWindow, -1, SDL_RENDERER_SOFTWARE);
+			printf("render is create: 0x%x(%s)\n", g_pRenderer, SDL_GetError());
 		} else {
-			displays[i].state = detached;
+			printf("Error: g_pWindow create fail\n");
 		}
-
-		printf("dpy: %d, state: %d\n", i, displays[i].state);
-		pthread_mutex_init(&displays[i].mutex, NULL);
-		pthread_cond_init(&displays[i].cond, NULL);
+	} else {
+		return 1;	// sdl could not initialize
 	}
-	ndisplays=1;
-	for (i = 0; i < ndisplays; i++) {
-		displays[i].pointers = (void **)malloc(sizeof(void *) * nbuffers);
-		if (displays[i].pointers == NULL) {
-			perror("malloc buffer fail\n");
-		}
-		screen_create_window(&displays[i].screen_win, screen_ctx);
-		/*if (idx != i) {
-			idx = i;
-			screen_set_window_property_pv(displays[i].screen_win, SCREEN_PROPERTY_DISPLAY, (void **)&displays[i]);
-		}*/
-		screen_set_window_property_pv(displays[i].screen_win, SCREEN_PROPERTY_DISPLAY, (void **)&screen_dpy[i]);
-		screen_set_window_property_iv(displays[i].screen_win, SCREEN_PROPERTY_USAGE, &usage);
 
-		displays[i].size[0] = 3840;
-		displays[i].size[1] = 720;
-		rc = screen_set_window_property_iv(displays[i].screen_win, SCREEN_PROPERTY_SIZE, displays[i].size);
-		if (rc) {
-			perror("screen_set_window_property_iv[SCREEN_PROPERTY_SIZE]");
-		} else {
-			printf("width: %d, height: %d\n", displays[i].size[0], displays[i].size[1]);
-		}
-		
-		rc = screen_get_window_property_iv(displays[i].screen_win, SCREEN_PROPERTY_SIZE, displays[i].size);
-		if (rc) {
-			perror("screen_get_window_property_iv[SCREEN_PROPERTY_SIZE]");
-		} else {
-			printf("width: %d, height: %d\n", displays[i].size[0], displays[i].size[1]);
-		}
-		
-		rc = screen_set_window_property_iv(displays[i].screen_win, SCREEN_PROPERTY_FORMAT, &bformat);
-		if (rc) {
-			perror("screen_set_window_property_iv(SCREEN_PROPERTY_FORMAT)");
-			goto fail;
-		}
-		screen_create_window_buffers(displays[i].screen_win, nbuffers);
-
-		screen_get_window_property_pv(displays[i].screen_win, SCREEN_PROPERTY_RENDER_BUFFERS, (void **)displays[i].screen_buf);
-		for (j = 0; j < nbuffers; j++) {
-			rc = screen_get_buffer_property_iv(displays[i].screen_buf[j], SCREEN_PROPERTY_STRIDE, &displays[i].stride[j]);
-			if (rc) {
-				perror("screen_get_buffer_property_iv[SCREEN_PROPERTY_STRIDE]");
-			} else {
-				printf("stride: %d\n", displays[i].stride[j]);
-			}
-			rc = screen_get_buffer_property_pv(displays[i].screen_buf[j], SCREEN_PROPERTY_POINTER, &(displays[i].pointers[j]));
-			if (rc) {
-				perror("screen_get_window_property_pv(SCREEN_PROPERTY_POINTER)");
-				goto fail;
-			}
-		}
-	}
-	m_screen_win = displays[0].screen_win;
-	// int ShareWindow(screen_window_t share_screen_win, int disp_id, int *pos, float *scale)
-	int pos[2] = {-1920, 0};
-	float scale[2] = {1, 1};
-	screen_create_window(&displays[1].screen_win, screen_ctx);
-	ShareWindow(displays[1].screen_win, 1, pos, scale);
 
 	// ffmpeg init
 	av_register_all();
@@ -341,7 +123,15 @@ int main(int argc, char* argv[])
 	av_dump_format(pFormatCtx,0,argv[1],0);
 	printf("-------------------------------------------------\n");
 
-	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, displays[0].size[0], displays[0].size[1], AV_PIX_FMT_BGRA, SWS_BICUBIC, NULL, NULL, NULL);
+	// sdl post init
+	// pTempSurface = SDL_CreateRGBSurface(0, pCodecCtx->width, pCodecCtx->height, 32, 0, 0, 0, 0); 
+	m_pTexture = SDL_CreateTexture(g_pRenderer, SDL_PIXELFORMAT_NV12, SDL_TEXTUREACCESS_TARGET, pCodecCtx->width, pCodecCtx->height);
+	if (m_pTexture == NULL) {
+		printf("SDL_CreateTexture fail: %s\n", SDL_GetError());
+	}
+	raw_nv12 = SDL_calloc(1, pCodecCtx->width * pCodecCtx->height / 2 * 3);
+
+	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, pCodecCtx->width, pCodecCtx->height, AV_PIX_FMT_NV12, SWS_BICUBIC, NULL, NULL, NULL);
 	printf("codec ctx, height: %d, width: %d\n", pCodecCtx->height, pCodecCtx->width);
 
 	gettimeofday(&tv_last, NULL);
@@ -354,32 +144,51 @@ int main(int argc, char* argv[])
 				return -1;
 			}
 			if(got_picture){
-				outbuf[0] = displays[0].pointers[0];
-				outbuf[1] = 0;
+				outbuf[0] = raw_nv12;
+				outbuf[1] = (unsigned char *)(raw_nv12) + pCodecCtx->width * pCodecCtx->height;
 				outbuf[2] = 0;
 				outbuf[3] = 0;
 
-				outlinesize[0] = displays[0].stride[0];
-				outlinesize[1] = 0;
+				outlinesize[0] = pCodecCtx->width;
+				outlinesize[1] = pCodecCtx->width;
 				outlinesize[2] = 0;
 				outlinesize[3] = 0;
-
 				sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, outbuf, outlinesize);
-				screen_post_window(displays[0].screen_win, displays[0].screen_buf[0], 0, NULL, 0);
+				SDL_UpdateTexture(m_pTexture, NULL, raw_nv12, pCodecCtx->width);
+				ret = SDL_QueryTexture(m_pTexture, NULL, NULL,
+						&m_sourceRectangle.w, &m_sourceRectangle.h);
+				if(ret < 0) { 
+					printf("SDL_QueryTexture fail: %s\n", SDL_GetError());
+				}
+
+				m_destinationRectangle.x = m_sourceRectangle.x = 0;
+				m_destinationRectangle.y = m_sourceRectangle.y = 0; 
+				m_destinationRectangle.w = m_sourceRectangle.w; 
+				m_destinationRectangle.h = m_sourceRectangle.h;
+				SDL_RenderCopy(g_pRenderer, m_pTexture, &m_sourceRectangle,
+						&m_destinationRectangle);
+
+				SDL_RenderPresent(g_pRenderer);
+
+				frame_rate++;
+				gettimeofday(&tv_current, NULL);
+				double diff = tv_current.tv_usec / 1000000.0 + tv_current.tv_sec - 
+					(tv_last.tv_usec / 1000000.0 + tv_last.tv_sec);
+				if(diff >= 1) {
+					fframe_rate = frame_rate/diff;
+					printf("Current frame rate is : %lf\n", fframe_rate);
+					tv_last = tv_current;
+					frame_rate = 0;
+				}
+
 			}
 		}
-		av_free_packet(packet);
-		frame_rate++;
-		gettimeofday(&tv_current, NULL);
-		double diff = tv_current.tv_usec / 1000000.0 + tv_current.tv_sec - 
-			(tv_last.tv_usec / 1000000.0 + tv_last.tv_sec);
-		if(diff >= 1) {
-			fframe_rate = frame_rate/diff;
-			printf("Current frame rate is : %lf\n", fframe_rate);
-			tv_last = tv_current;
-			frame_rate = 0;
+		if (need_quit == true) {
+			break;
 		}
+		av_free_packet(packet);
 	}
+	SDL_Quit();
 #if 0 
 	//FIX: Flush Frames remained in Codec
 	while (1) {
@@ -412,6 +221,10 @@ int main(int argc, char* argv[])
 #endif 
 	sws_freeContext(img_convert_ctx);
 fail: 
+	if (raw_nv12 != NULL) {
+		SDL_free(raw_nv12);
+		raw_nv12 = NULL;
+	}
 	av_free(pFrameYUV);
 	avcodec_close(pCodecCtx);
 	avformat_close_input(&pFormatCtx);
