@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <pthread.h>
 #include <sys/time.h>
+#include <signal.h>
+
 
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -56,8 +58,8 @@ int main(int argc, char* argv[])
 	SDL_Rect m_sourceRectangle; // the first rectangle
 	SDL_Rect m_destinationRectangle; // another rectangle
 	SDL_Surface* pTempSurface = NULL;
-	int window_width = 640;
-	int widnow_height = 480;
+	int window_width = 1920;
+	int widnow_height = 720;
 
 	signal(SIGINT,when_sigint);
 
