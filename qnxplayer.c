@@ -137,7 +137,25 @@ int main(int argc, char* argv[])
 	printf("codec ctx, height: %d, width: %d\n", pCodecCtx->height, pCodecCtx->width);
 
 	gettimeofday(&tv_last, NULL);
-	while(av_read_frame(pFormatCtx, packet)>=0){
+	while(1){
+		if (av_read_frame(pFormatCtx, packet) <0 ) {
+			int64_t tm;
+			/* seek to start of file */
+			AVFormatContext *is = pFormatCtx;		
+			int stream_index = av_find_default_stream_index(is);
+			//Convert ts to frame
+			tm = av_rescale(tm, is->streams[stream_index]->time_base.den, is->streams[stream_index]->time_base.num);
+			tm /= 1000;
+
+			//SEEK
+			if (avformat_seek_file(is, stream_index, INT64_MIN, tm, INT64_MAX, 0) < 0) {
+			    av_log(NULL, AV_LOG_ERROR, "ERROR av_seek_frame: %u\n", tm);
+			} else {
+			    av_log(NULL, AV_LOG_ERROR, "SUCCEEDED av_seek_frame: %u newPos:%d\n", tm, is->pb->pos);
+			    avcodec_flush_buffers(is->streams[stream_index]->codec);
+			}
+			continue;
+		}
 		if(packet->stream_index==videoindex){
 			//Decode
 			ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, packet);
