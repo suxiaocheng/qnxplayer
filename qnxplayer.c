@@ -58,7 +58,7 @@ int main(int argc, char* argv[])
 	SDL_Rect m_sourceRectangle; // the first rectangle
 	SDL_Rect m_destinationRectangle; // another rectangle
 	SDL_Surface* pTempSurface = NULL;
-	int window_width = 1920;
+	int window_width = 1920; //3840;
 	int widnow_height = 720;
 
 	signal(SIGINT,when_sigint);
@@ -139,20 +139,15 @@ int main(int argc, char* argv[])
 	gettimeofday(&tv_last, NULL);
 	while(1){
 		if (av_read_frame(pFormatCtx, packet) <0 ) {
-			int64_t tm;
-			/* seek to start of file */
-			AVFormatContext *is = pFormatCtx;		
-			int stream_index = av_find_default_stream_index(is);
+			int stream_index = av_find_default_stream_index(pFormatCtx);
 			//Convert ts to frame
-			tm = av_rescale(tm, is->streams[stream_index]->time_base.den, is->streams[stream_index]->time_base.num);
-			tm /= 1000;
 
 			//SEEK
-			if (avformat_seek_file(is, stream_index, INT64_MIN, tm, INT64_MAX, 0) < 0) {
-			    av_log(NULL, AV_LOG_ERROR, "ERROR av_seek_frame: %u\n", tm);
+			if (avformat_seek_file(pFormatCtx, stream_index, INT64_MIN, 0, 0, 0) < 0) {
+			    av_log(NULL, AV_LOG_ERROR, "ERROR av_seek_frame: %u\n", 0);
 			} else {
-			    av_log(NULL, AV_LOG_ERROR, "SUCCEEDED av_seek_frame: %u newPos:%d\n", tm, is->pb->pos);
-			    avcodec_flush_buffers(is->streams[stream_index]->codec);
+			    av_log(NULL, AV_LOG_ERROR, "SUCCEEDED av_seek_frame: %u newPos:%d\n", 0, pFormatCtx->pb->pos);
+			    avcodec_flush_buffers(pFormatCtx->streams[stream_index]->codec);
 			}
 			continue;
 		}
@@ -209,36 +204,6 @@ int main(int argc, char* argv[])
 		av_free_packet(packet);
 	}
 	SDL_Quit();
-#if 0 
-	//FIX: Flush Frames remained in Codec
-	while (1) {
-		ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, packet);
-		if (ret < 0)
-			break;
-		if (!got_picture)
-			break;
-		sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, pFrameYUV->data, pFrameYUV->linesize);
-		
-		SDL_LockYUVOverlay(bmp);
-		pFrameYUV->data[0]=bmp->pixels[0];
-		pFrameYUV->data[1]=bmp->pixels[2];
-		pFrameYUV->data[2]=bmp->pixels[1];     
-		pFrameYUV->linesize[0]=bmp->pitches[0];
-		pFrameYUV->linesize[1]=bmp->pitches[2];   
-		pFrameYUV->linesize[2]=bmp->pitches[1];
-#if OUTPUT_YUV420P
-		int y_size=pCodecCtx->width*pCodecCtx->height;  
-		fwrite(pFrameYUV->data[0],1,y_size,fp_yuv);    //Y 
-		fwrite(pFrameYUV->data[1],1,y_size/4,fp_yuv);  //U
-		fwrite(pFrameYUV->data[2],1,y_size/4,fp_yuv);  //V
-#endif
- 
-		SDL_UnlockYUVOverlay(bmp); 
-		SDL_DisplayYUVOverlay(bmp, &rect); 
-		//Delay 40ms
-		SDL_Delay(40);
-	}
-#endif 
 	sws_freeContext(img_convert_ctx);
 fail: 
 	if (raw_nv12 != NULL) {
