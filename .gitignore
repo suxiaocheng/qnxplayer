@@ -5,3 +5,10 @@ qnxplayer
 *~
 # ignore the swap file
 *.swp
+*.swo
+
+# ignore the output file
+*.o
+
+# ignore depend file
+depend
