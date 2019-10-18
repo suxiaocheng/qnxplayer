@@ -33,8 +33,15 @@ typedef struct
 } UserData;
 
 unsigned char *yuv420p;
+#if 1
+unsigned char *video_filename="/home/suxiaocheng/Videos/desaysv.3gp";
+int width = 1920;
+int height = 720;
+#else
+unsigned char *video_filename="/home/suxiaocheng/Videos/Lion4.mp4";
 int width = 3840;
 int height = 720;
+#endif
 
 AVFormatContext	*pFormatCtx;
 int i, j, videoindex;
@@ -129,6 +136,7 @@ int Init ( ESContext *esContext )
 {
    UserData *userData = esContext->userData;
    int ret;
+
    char vShaderStr[] =
       "#version 300 es                            \n"
       "layout(location = 0) in vec4 a_position;   \n"
@@ -144,26 +152,26 @@ int Init ( ESContext *esContext )
       "#version 300 es                                     \n"
       "precision mediump float;                            \n"
       "in vec2 v_texCoord;                                 \n"
-      "uniform sampler2D tex_y;				   \n"
-      "uniform sampler2D tex_u;				   \n"
-      "uniform sampler2D tex_v;				   \n"
-      "out vec4 outColor;		   \n"
+      "uniform sampler2D tex_y;                            \n"
+      "uniform sampler2D tex_u;                            \n"
+      "uniform sampler2D tex_v;                            \n"
+      "out vec4 outColor;                  \n"
       "void main()                                         \n"
       "{                                                   \n"
-      "  vec3 YUV;					   \n"
-      "  vec3 RGB;					   \n"
-      "  YUV.x = texture(tex_y, v_texCoord).r - 0.0625; \n"
+      "  vec3 YUV;                                         \n"
+      "  vec3 RGB;                                         \n"
+      "  YUV.x = texture(tex_y, v_texCoord).r; \n"
       "  YUV.y = texture(tex_u, v_texCoord).r - 0.5;\n"
       "  YUV.z = texture(tex_v, v_texCoord).r - 0.5;\n"
-      "  RGB = mat3(1.164, 1.164, 1.164,		   \n"
-      "      0.0, 0.813, 1.596,			   \n"
-      "      2.018, 0.391, 0.0) * YUV;		   \n"
+      "  RGB = mat3(1.0, 1.0, 1.0,                 \n"
+      "      0.0, -0.21482, 2.12798,                       \n"
+      "      1.28033, -0.38059, 0.0) * YUV;                \n"
       /*
-      "  RGB = mat3(0.0, 0.0, 0.0,		   \n"
-      "      0.0, 0.0, 0.0,			   \n"
-      "      1.0, 1.0, 1.0) * YUV;		   \n"
+      "  RGB = mat3(0.0, 0.0, 0.0,                 \n"
+      "      0.0, 0.0, 0.0,                        \n"
+      "      1.0, 1.0, 1.0) * YUV;                 \n"
       */
-      "  outColor = vec4(RGB.z, RGB.y, RGB.x, 1.0);			   \n"
+      "  outColor = vec4(RGB, 1.0);                        \n"
       "}                                                   \n";
 
    // Load the shaders and get a linked program object
@@ -234,7 +242,7 @@ int init_ffmpeg(char *name)
 
 	raw_nv12 = calloc(1, pCodecCtx->width * pCodecCtx->height / 2 * 3);
 
-	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, pCodecCtx->width, pCodecCtx->height, AV_PIX_FMT_NV12, SWS_BICUBIC, NULL, NULL, NULL);
+	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, pCodecCtx->width, pCodecCtx->height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
 	printf("codec ctx, height: %d, width: %d\n", pCodecCtx->height, pCodecCtx->width);
 	return 0;
 }
@@ -255,7 +263,7 @@ void Draw ( ESContext *esContext )
                             1.0f,  0.0f         // TexCoord 3
                          };
    GLushort indices[] = { 0, 1, 2, 0, 2, 3 };
-   yuv420p = raw_nv12;
+   //
 
    // Set the viewport
    glViewport ( 0, 0, esContext->width, esContext->height );
@@ -358,9 +366,11 @@ void UpdateFunc(ESContext *es, float deltaTime)
 				outlinesize[2] = pCodecCtx->width/2;
 				outlinesize[3] = 0;
 				sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, outbuf, outlinesize);
+				yuv420p = raw_nv12;
 				#else
 				yuv420p = pFrame->data;
 				#endif
+				Draw(es);
 				got_frame = 1;
 
 				gettimeofday(&tv_current, NULL);
@@ -389,7 +399,7 @@ int esMain ( ESContext *esContext )
 {
    esContext->userData = malloc ( sizeof ( UserData ) );
 
-   init_ffmpeg("/home/suxiaocheng/Videos/Lion4.mp4");
+   init_ffmpeg(video_filename);
    esCreateWindow ( esContext, "Simple Texture 2D", width, height, ES_WINDOW_RGB );
 
    if ( !Init ( esContext ) )
@@ -397,7 +407,7 @@ int esMain ( ESContext *esContext )
       return GL_FALSE;
    }
 
-   esRegisterDrawFunc ( esContext, Draw );
+   //esRegisterDrawFunc ( esContext, Draw );
    esRegisterUpdateFunc ( esContext, UpdateFunc );
    esRegisterShutdownFunc ( esContext, ShutDown );
 
@@ -410,144 +420,3 @@ void when_sigint()
 	need_quit = true;
 	//exit(0);  
 }  
-
-int _esMain(int argc, char* argv[])
-{
-	//FFmpeg
-	AVFormatContext	*pFormatCtx;
-	int i, j, videoindex;
-	AVCodecContext	*pCodecCtx;
-	AVCodec			*pCodec;
-	AVFrame	*pFrame,*pFrameYUV;
-	AVPacket *packet;
-	struct SwsContext *img_convert_ctx = NULL;
-
-	// framerate static data
-	struct timeval tv_last;
-	struct timeval tv_current;
-	int frame_rate = 0;
-	double fframe_rate = 0;
-
-	// buffer convert data struct
-	unsigned char *outbuf[4];
-	int outlinesize[4];
-
-	int ret;
-	int got_picture;
-	unsigned char *raw_nv12 = NULL;
-
-	signal(SIGINT,when_sigint);
-
-	// ffmpeg init
-	av_register_all();
-	avformat_network_init();
-	
-	pFormatCtx = avformat_alloc_context();
- 
-	if(avformat_open_input(&pFormatCtx,argv[1],NULL,NULL)!=0){
-		printf("Couldn't open input stream.\n");
-		return -1;
-	}
-	if(avformat_find_stream_info(pFormatCtx,NULL)<0){
-		printf("Couldn't find stream information.\n");
-		return -1;
-	}
-	videoindex=-1;
-	for(i=0; i<pFormatCtx->nb_streams; i++) {
-		if(pFormatCtx->streams[i]->codec->codec_type==AVMEDIA_TYPE_VIDEO){
-			videoindex=i;
-			break;
-		}
-	}
-	if(videoindex==-1){
-		printf("Didn't find a video stream.\n");
-		return -1;
-	}
-	pCodecCtx=pFormatCtx->streams[videoindex]->codec;
-	pCodec=avcodec_find_decoder(pCodecCtx->codec_id);
-	if(pCodec==NULL){
-		printf("Codec not found.\n");
-		return -1;
-	}
-	if(avcodec_open2(pCodecCtx, pCodec,NULL)<0){
-		printf("Could not open codec.\n");
-		return -1;
-	}
-	
-	pFrame=av_frame_alloc();
-	pFrameYUV=av_frame_alloc();
- 
-	packet=(AVPacket *)av_malloc(sizeof(AVPacket));
-	printf("------------- File Information ------------------\n");
-	av_dump_format(pFormatCtx,0,argv[1],0);
-	printf("-------------------------------------------------\n");
-
-	raw_nv12 = calloc(1, pCodecCtx->width * pCodecCtx->height / 2 * 3);
-
-	img_convert_ctx = sws_getContext(pCodecCtx->width, pCodecCtx->height, pCodecCtx->pix_fmt, pCodecCtx->width, pCodecCtx->height, AV_PIX_FMT_YUV420P, SWS_BICUBIC, NULL, NULL, NULL);
-	printf("codec ctx, height: %d, width: %d\n", pCodecCtx->height, pCodecCtx->width);
-
-	gettimeofday(&tv_last, NULL);
-	while(1){
-		if (av_read_frame(pFormatCtx, packet) <0 ) {
-			int stream_index = av_find_default_stream_index(pFormatCtx);
-			//Convert ts to frame
-
-			//SEEK
-			if (avformat_seek_file(pFormatCtx, stream_index, INT64_MIN, 0, 0, 0) < 0) {
-			    av_log(NULL, AV_LOG_ERROR, "ERROR av_seek_frame: %u\n", 0);
-			} else {
-			    av_log(NULL, AV_LOG_ERROR, "SUCCEEDED av_seek_frame: %u newPos:%d\n", 0, pFormatCtx->pb->pos);
-			    avcodec_flush_buffers(pFormatCtx->streams[stream_index]->codec);
-			}
-			continue;
-		}
-		if(packet->stream_index==videoindex){
-			//Decode
-			ret = avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, packet);
-			if(ret < 0){
-				printf("Decode Error.\n");
-				return -1;
-			}
-			if(got_picture){
-				outbuf[0] = raw_nv12;
-				outbuf[1] = (unsigned char *)(raw_nv12) + pCodecCtx->width * pCodecCtx->height;
-				outbuf[2] = (unsigned char *)(raw_nv12) + (pCodecCtx->width * pCodecCtx->height)*5/4;
-				outbuf[3] = 0;
-
-				outlinesize[0] = pCodecCtx->width;
-				outlinesize[1] = pCodecCtx->width/4;
-				outlinesize[2] = pCodecCtx->width/4;
-				outlinesize[3] = 0;
-				sws_scale(img_convert_ctx, (const uint8_t* const*)pFrame->data, pFrame->linesize, 0, pCodecCtx->height, outbuf, outlinesize);
-
-				gettimeofday(&tv_current, NULL);
-				double diff = tv_current.tv_usec / 1000000.0 + tv_current.tv_sec - 
-					(tv_last.tv_usec / 1000000.0 + tv_last.tv_sec);
-				if(diff >= 1) {
-					fframe_rate = frame_rate/diff;
-					printf("Current frame rate is : %lf\n", fframe_rate);
-					tv_last = tv_current;
-					frame_rate = 0;
-				}
-
-			}
-		}
-		if (need_quit == true) {
-			break;
-		}
-		av_free_packet(packet);
-	}
-	if (img_convert_ctx != NULL) {
-		sws_freeContext(img_convert_ctx);
-	}
-fail: 
-	if (raw_nv12 != NULL) {
-		raw_nv12 = NULL;
-	}
-	av_free(pFrameYUV);
-	avcodec_close(pCodecCtx);
-	avformat_close_input(&pFormatCtx);
- 
-	return 0;
-}
